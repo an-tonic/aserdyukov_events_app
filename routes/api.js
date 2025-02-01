@@ -67,7 +67,7 @@ router.get('/user', async (req, res) => {
     const eventID = req.query.eventID;
 
     if (eventID) {
-        const errors = validateId(eventID);
+        const errors = validateNumber(eventID);
 
         if (errors.length > 0) {
             return res
@@ -99,7 +99,7 @@ router.get('/user', async (req, res) => {
 router.get('/user/:id', async (req, res) => {
     const {id} = req.params;
 
-    const errors = validateId(id);
+    const errors = validateNumber(id);
 
     if (errors.length > 0) {
         return res
@@ -137,7 +137,7 @@ router.get('/user/:id', async (req, res) => {
 router.delete('/user/delete', async (req, res) => {
     const id = req.query.id;
 
-    const errors = validateId(id);
+    const errors = validateNumber(id);
 
     if (errors.length > 0) {
         return res
@@ -181,11 +181,10 @@ router.delete('/user/delete', async (req, res) => {
 
 });
 
-
 router.put('/user/update', async (req, res) => {
     const {id, username, firstname, lastname} = req.body;
 
-    const errors = validateId(id);
+    const errors = validateNumber(id);
 
     if (!username) errors.push('Username is missing.');
     else if (typeof username !== 'string') errors.push('Username must be a string.');
@@ -253,9 +252,8 @@ router.put('/user/update', async (req, res) => {
 
 
 //Organizer API
-//TODO Test this after email is answered
 router.post('/organizer/create', async (req, res) => {
-    const {id, name} = req.body;
+    const {name} = req.body;
 
     const errors = [];
 
@@ -270,6 +268,13 @@ router.post('/organizer/create', async (req, res) => {
             .status(422)
             .setHeader('content-type', 'application/json')
             .json({errors});
+    }
+    const existingOrganizer = await Organizer.findOne({where: {name}});
+    if (existingOrganizer) {
+        return res
+            .status(409)
+            .setHeader('content-type', 'application/json')
+            .json({error: "Specified organizer name already exists"});
     }
 
     try {
@@ -291,7 +296,7 @@ router.post('/organizer/create', async (req, res) => {
 router.delete('/organizer/delete', async (req, res) => {
     const id = req.query.id;
 
-    const errors = validateId(id);
+    const errors = validateNumber(id);
 
     if (errors.length > 0) {
         return res
@@ -333,7 +338,6 @@ router.delete('/organizer/delete', async (req, res) => {
             .json({error: `An error occurred while deleting the Organizer: ${error}`});
     }
 
-
 });
 
 //TODO test with relations with an event
@@ -367,7 +371,6 @@ router.get('/organizer', async (req, res) => {
 })
 
 //EventType API
-
 router.post('/event-type/create', async (req, res) => {
     const {name} = req.body;
 
@@ -413,7 +416,7 @@ router.post('/event-type/create', async (req, res) => {
 router.delete('/event-type/delete', async (req, res) => {
     const id = req.query.id;
 
-    const errors = validateId(id);
+    const errors = validateNumber(id);
 
     if (errors.length > 0) {
         return res
@@ -432,7 +435,7 @@ router.delete('/event-type/delete', async (req, res) => {
                 .setHeader('content-type', 'application/json')
                 .json({error: `EventType with ID ${id} was not found`});
         }
-        const eventCount = await EventTy.count({where: {eventTypeID: id}});
+        const eventCount = await Event.count({where: {eventTypeID: id}});
 
         if (eventCount > 0) {
             return res
@@ -455,7 +458,6 @@ router.delete('/event-type/delete', async (req, res) => {
             .json({error: `An error occurred while deleting the Organizer: ${error}`});
     }
 
-
 });
 
 //TODO test with relations with an event
@@ -473,18 +475,128 @@ router.get('/event-type', async (req, res) => {
 })
 
 
-function validateId(id) {
+//Event API
+router.post('/event/create', async (req, res) => {
+    let {eventTypeID, organizerID, name, price, dateTime, locationLatitude, locationLongitude, maxParticipants} = req.body;
+    //Pre-processing
+    dateTime = Number(dateTime);
+    if (dateTime.toString().length === 10) {
+        dateTime *= 1000; // Convert seconds to milliseconds if the stamp is in seconds (10 digits)
+    }
+
+    let newEvent = {
+        eventTypeID: Number(eventTypeID),
+        organizerID: Number(organizerID),
+        name,
+        price: Number(price),
+        dateTime,
+        locationLatitude: Number(locationLatitude),
+        locationLongitude: Number(locationLongitude),
+        maxParticipants: Number(maxParticipants)
+    };
+    let errors = [];
+
+    errors.push(...validateNumber(eventTypeID, 'eventTypeID'));
+    errors.push(...validateNumber(organizerID, 'organizerID'));
+    errors.push(...validateNumber(price, 'Price'));
+    errors.push(...validateNumber(dateTime, 'dateTime'));
+    errors.push(...validateLocation(locationLatitude, 'latitude'));
+    errors.push(...validateLocation(locationLongitude, 'longitude'));
+    errors.push(...validateNumber(maxParticipants, 'maxParticipants'));
+
+    if (!name) errors.push('Name is missing.');
+    else if (typeof name !== 'string') errors.push('Name must be a string.');
+    else if (name.trim() === '') errors.push('Name should contain characters.');
+    else if (name.length < 2 || name.length > 255) errors.push('The name must be between 2-255 characters long.');
+    if (/\W/.test(name)) {
+        const pos = name.search(/\W/);
+        errors.push(`Name should only contain alphanumeric characters. Wrong char '${name[pos]}' was found at position ${pos + 1}`);
+    }
+
+    if(price === 0){
+        errors.push('price should be non-zero')
+    }
+    if(maxParticipants === 0){
+        errors.push('maxParticipants should be non-zero')
+    }
+    if (dateTime <= Date.now()) {
+        errors.push("dateTime must be in the future.");
+    }
+
+    if (errors.length > 0) {
+        return res
+            .status(422)
+            .setHeader('content-type', 'application/json')
+            .json({errors});
+    }
+
+    try {
+        const foundEventType = await EventType.findOne({where: {id: eventTypeID}});
+        const foundOrganizer = await Organizer.findOne({where: {id: organizerID}});
+
+        if (!foundEventType) {
+            return res
+                .status(409)
+                .setHeader('content-type', 'application/json')
+                .json({error: "Specified event type does not exists"});
+        }
+        if (!foundOrganizer) {
+            return res
+                .status(409)
+                .setHeader('content-type', 'application/json')
+                .json({error: "Specified organizer does not exists"});
+        }
+
+        const newEventType = await Event.create(newEvent);
+        return res
+            .status(200)
+            .setHeader('content-type', 'application/json')
+            .json(newEventType);
+    } catch (err) {
+        return res
+            .status(500)
+            .setHeader('content-type', 'application/json')
+            .json({error: `An error occurred while creating the organizer: ${err}`});
+    }
+
+})
+
+
+function validateNumber(id, idType = "ID") {
     const errors = [];
 
-    if (!id) {
-        errors.push('ID is missing.')
+    if (id === null || id === undefined) {
+        errors.push(idType + ' is missing.')
         return errors;
     }
+
     id = id.toString();
-    if (id.trim().length === 0) errors.push('ID must be non-empty.');
-    if (isNaN(Number(id))) errors.push('ID must be a valid number.');
-    else if (!Number.isInteger(Number(id))) errors.push('ID must be an integer.');
-    if (Number(id) < 0) errors.push('ID must be positive.');
+    if (id.trim().length === 0) errors.push(idType + ' must be non-empty.');
+    if (isNaN(id)) errors.push(idType + ' must be a valid number.');
+    else if (!Number.isInteger(Number(id))) errors.push(idType + ' must be an integer.');
+    if (Number(id) < 0) errors.push(idType + ' must be positive.');
+
+    return errors;
+}
+
+function validateLocation(location, type) {
+    const errors = [];
+
+    if (location === null || location === undefined) {
+        errors.push(type + ' is missing.')
+        return errors;
+    }
+
+    location = Math.abs(location).toString();
+    if (location.trim().length === 0) errors.push(type + ' must be non-empty.');
+    if (isNaN(location)) errors.push(type + ' must be a valid number.');
+
+    if(type === "latitude"){
+        if (Number(location) > 90) errors.push(type + ' must between values -90 and 90');
+    } else if( type === "longitude"){
+        if (Number(location) > 180) errors.push(type + ' must between values -180 and 180');
+    }
+
 
     return errors;
 }
