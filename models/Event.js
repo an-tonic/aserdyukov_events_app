@@ -34,7 +34,7 @@ const Event = sequelize.define('Event', {
         allowNull: false,
     },
     dateTime: {
-        type: DataTypes.DATE,
+        type: DataTypes.INTEGER,
         allowNull: false,
     },
     locationLatitude: {
